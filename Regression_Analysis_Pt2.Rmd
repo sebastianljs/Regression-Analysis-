@@ -1,0 +1,421 @@
+---
+title: "Exam2"
+author: "Sebastian Lin"
+date: "October 15, 2016"
+output: html_document
+---
+## STA210 Exam 2 
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r preliminaries}
+# Load package 
+library(Sleuth3)
+library(plyr)
+library(ggplot2)
+library(MASS)
+library(car)
+# Load data 
+voting.data = read.csv('georgia.csv')
+head(voting.data)
+# Save original graphing parameters
+opar = par()
+```
+
+```{r transform data}
+# Assign county types 
+voting.data$county.type[voting.data$atlanta.metro==1] = "Metro-Atlanta"
+voting.data$county.type[voting.data$atlanta.metro==0 & voting.data$rural==0] = "Nonrurual, Non-Atlanta"
+voting.data$county.type[voting.data$atlanta.metro==0 & voting.data$rural==1] = "Rural"
+# Calculate percentage uncounted 
+voting.data$percent.uncounted = 1-voting.data$votes/voting.data$ballots
+```
+
+```{r aggregate data}
+generate.summary <- function(voting.data, by.var){
+  # Count ballots, votes and county number   
+  voting.data.agg = aggregate(voting.data[,c("ballots","votes")], by=voting.data[by.var], FUN=sum)
+  county.count = aggregate(voting.data$County, by=voting.data[by.var], FUN=length)
+  
+  # Merge dataframe 
+  voting.data.agg = merge(county.count, voting.data.agg)
+  voting.data.agg = rename(voting.data.agg, c("x"="no.of.Counties"))
+  
+  # Calculate percentage uncounted
+  voting.data.agg$percent.uncounted = round((1 - voting.data.agg$votes/voting.data.agg$ballots)*100, digits = 1)
+  
+  # Order by percentage uncounted 
+  voting.data.agg = voting.data.agg[order(voting.data.agg$percent.uncounted),]
+  voting.data.agg = rename(voting.data.agg, c("percent.uncounted"="% uncounted") )
+  return(voting.data.agg)
+}
+```
+
+
+```{r replicate tables}
+# Use Kable package 
+# Voting data by equipment 
+voting.data.by.equip = generate.summary(voting.data=voting.data, by.var="equip"); voting.data.by.equip
+# Voting data by type of county 
+voting.data.by.county.type = generate.summary(voting.data=voting.data, by.var="county.type"); voting.data.by.county.type
+# Voting data by econ tier 
+voting.data.by.econ.tier = generate.summary(voting.data=voting.data, by.var="econ"); voting.data.by.econ.tier
+```
+
+```{r Model 1: unweighted regression}
+equip = voting.data$equip 
+percent.uncounted = voting.data$percent.uncounted
+
+# Model 1: Unweighted regression using equip 
+uncounted.v.equip = lm(percent.uncounted ~ equip, data=voting.data)
+summary(uncounted.v.equip)
+```
+
+```{r Model 2: weighted regression}
+# Model 2: Regression using equip weighted by no. of ballots  
+weighted.uncounted.v.equip = lm(percent.uncounted ~ equip, weights = ballots, data=voting.data)
+summary(weighted.uncounted.v.equip)
+```
+
+```{r Model 3: weighted regression with log ballot, equip }
+
+# Model 3: Built on model 2 with log ballot added 
+weighted.uncounted.v.equip.log.ballot = lm(percent.uncounted ~ log(ballots)+equip, weights = ballots, data = voting.data)
+summary(weighted.uncounted.v.equip.log.ballot)
+
+```
+
+```{r Model 4: weighted regression with indicators}
+# Model 4: Replace log ballot in model 3 with two indicators 
+weighted.uncounted.v.equip.indicators = lm(percent.uncounted ~equip+rural+atlanta.metro, weights = ballots, data=voting.data)
+summary(weighted.uncounted.v.equip.indicators)
+```
+
+```{r Model 5: weighted regression with indicators + AA}
+afam = voting.data$X.afr.am
+
+# Model 5: Built on model 4 with %African American added 
+weighted.uncounted.v.equip.indicators.afam = lm(percent.uncounted~equip+rural+atlanta.metro+X.afr.am, weights=ballots, data=voting.data)
+summary(weighted.uncounted.v.equip.indicators.afam)
+
+```
+
+```{r Model 6: weighted regression with indicators + AA + econ.tier}
+
+# Model 6: Built on model 5 with econ.tier added 
+weighted.uncounted.v.equip.indicators.afam.tier = lm(percent.uncounted~equip+rural+atlanta.metro+X.afr.am+econ, weights = ballots, data = voting.data)
+summary(weighted.uncounted.v.equip.indicators.afam.tier)
+
+```
+
+```{r Model 7: weighted regression with econ.tier + equip}
+# Model 7: Model with equip and econ.tier as predictors 
+weighted.uncounted.v.equip.econ.tier = lm(percent.uncounted~equip+econ, weights=ballots, data = voting.data)
+summary(weighted.uncounted.v.equip.econ.tier)
+```
+
+```{r Model 8: same as above but with interaction}
+# Model 8: Built on model 7 with interaction term between econ.tier and equip added
+interaction.model = lm(percent.uncounted~equip+econ+equip*econ, weights=ballots, data = voting.data)
+summary(interaction.model)
+```
+
+```{r Model 9: same as above but remove outliers}
+# Reference: http://stackoverflow.com/questions/4787332/how-to-remove-outliers-from-a-dataset
+# Find index of outliers & drop outliers 
+index.to.drop = which(voting.data$County %in% c("BEN.HILL", "RANDOLPH", "FULTON", "CLAYTON", "DEKALB"))
+voting.data.wo.outliers = voting.data
+voting.data.wo.outliers[index.to.drop,] = NA
+
+# Model 9: Regression model w/o outliers 
+model.wo.outliers = lm(percent.uncounted ~ equip + econ, weights = ballots, data = voting.data.wo.outliers)
+summary(model.wo.outliers)
+```
+
+```{r Model 10: model with only econ.tier}
+# Model 10: Regression model w econ tiers 
+model.econ.tier = lm(percent.uncounted~econ, weight=ballots, data = voting.data)
+summary(model.econ.tier)
+```
+
+```{r replicate plot 1}
+#Figure 1 
+equip = voting.data$equip
+percent.uncounted = as.factor(percent.uncounted)
+plot1 = ggplot(voting.data, aes(x= equip, y=percent.uncounted)) + geom_point()
+counties.to.label = c("Ben.hill", "Randolph", "Wheeler","Taylor","Truetlen","Bacon", "Telfair", "Calhoun")
+
+# Make counties properly capitalized
+proper <- function(x) paste0(toupper(substr(x, 1, 1)), tolower(substring(x, 2)))
+
+# Properly capitalize County column 
+voting.data$County = proper(voting.data$County)
+
+# Get outliers 
+index.to.get = which(voting.data$County %in% counties.to.label)
+outliers = voting.data[index.to.get,]
+
+# reorder based on overall proportions 
+equip.reordered = reorder(voting.data.by.equip$equip, voting.data.by.equip$`% uncounted`);equip.reordered
+
+# plot using ggplot 
+plot1 = ggplot(voting.data.by.equip, aes(x= equip.reordered, y=voting.data.by.equip$`% uncounted`/100)) + geom_point(aes(size = 10)) + geom_point(data = voting.data, aes(x=equip, y=percent.uncounted)) +  geom_text(data=outliers, aes(equip, percent.uncounted, label = outliers$County), nudge_y = 0.005)
+print(plot1)
+
+```
+
+```{r replicate plot 2}
+# Plot 2 
+# Adjust predicted and residual 
+predicted.adjusted = weighted.uncounted.v.equip$fitted.values*voting.data$ballots^0.5
+residual.adjusted = weighted.uncounted.v.equip$residuals*voting.data$ballots^0.5
+adjusted.df = data.frame(voting.data$County, predicted.adjusted, residual.adjusted)
+colnames(adjusted.df) = c("county", 'predicted.adjusted', 'residual.adjusted'); head(adjusted.df)
+# Find outliers & create outlier dataframe 
+outlier.counties = c("Ben.hill", "Randolph", "Fulton", "Clayton", "Dekalb")
+outlier.index = which(voting.data$County %in% outlier.counties); outlier.index
+outlier.df = data.frame(voting.data$County[outlier.index], predicted.adjusted[outlier.index], residual.adjusted[outlier.index]); 
+colnames(outlier.df) = c("county", "predicted.adjusted", "residual.adjusted"); outlier.df
+
+# plot using ggplot 
+plot2 = ggplot(data = adjusted.df, aes(x=predicted.adjusted, y=residual.adjusted)) + geom_point() + geom_text(data = outlier.df, aes(x=predicted.adjusted, y=residual.adjusted, label=county), nudge_y = 0.5) + xlab("Predicted Proportion of Uncounted Votes,\n Multiplied by Square Root of Ballots") + ylab("Residual Proportion of Uncounted Votes,\n Multiplied by Square Root of Ballots")
+print(plot2)
+
+```
+
+```{r replicate plot 3}
+# Voting data by econ tier and equipment 
+# Reference: http://stackoverflow.com/questions/8592585/combine-points-with-lines-with-ggplot2
+voting.data.by.econ.tier.equip = generate.summary(voting.data=voting.data, by.var=c("econ","equip"));
+# Drop counties with equip = paper 
+voting.data.by.econ.tier.equip = voting.data.by.econ.tier.equip[voting.data.by.econ.tier.equip$equip != "PAPER",]
+voting.data.by.econ.tier.equip$equip = factor(voting.data.by.econ.tier.equip$equip, levels = c("OS-PC", "OS-CC", "LEVER", "PUNCH"))
+# Select only OS-PC
+voting.data.ospc = voting.data.by.econ.tier.equip[voting.data.by.econ.tier.equip$equip == "OS-PC",];voting.data.ospc
+# ggplot
+plot3 = ggplot(voting.data.by.econ.tier.equip, aes(x=voting.data.by.econ.tier.equip$equip, y=voting.data.by.econ.tier.equip$`% uncounted`, group = voting.data.by.econ.tier.equip$econ)) + geom_line() + geom_text(aes(label=voting.data.by.econ.tier.equip$no.of.Counties), nudge_y = 0.3) + xlab("Voting Method") + ylab("Percent Uncounted Votes") + geom_text(data = voting.data.ospc, aes(voting.data.ospc$equip,voting.data.ospc$`% uncounted`, label=voting.data.ospc$econ, group = 1), nudge_x = -0.3, nudge_y = 0.3)
+print(plot3) 
+```
+
+```{r replicate plot 4}
+
+# Plot 4 figure 1 
+# Adjust predicted and residual 
+predicted.adjusted = weighted.uncounted.v.equip.econ.tier$fitted.values*voting.data$ballots^0.5
+residual.adjusted = weighted.uncounted.v.equip.econ.tier$residuals*voting.data$ballots^0.5
+adjusted.df = data.frame(voting.data$County, predicted.adjusted, residual.adjusted)
+colnames(adjusted.df) = c("county", 'predicted.adjusted', 'residual.adjusted'); head(adjusted.df)
+# Find outliers & create outlier dataframe 
+outlier.counties = c("Ben.hill", "Randolph", "Fulton", "Clayton", "Dekalb")
+outlier.index = which(voting.data$County %in% outlier.counties); outlier.index
+outlier.df = data.frame(voting.data$County[outlier.index], predicted.adjusted[outlier.index], residual.adjusted[outlier.index]); 
+colnames(outlier.df) = c("county", "predicted.adjusted", "residual.adjusted"); outlier.df
+
+# plot using ggplot 
+plot4 = ggplot(data = adjusted.df, aes(x=predicted.adjusted, y=residual.adjusted)) + geom_point() + geom_text(data = outlier.df, aes(x=predicted.adjusted, y=residual.adjusted, label=county), nudge_y = 0.5) + xlab("Predicted Proportion of Uncounted Votes,\n Multiplied by Square Root of Ballots") + ylab("Residual Proportion of Uncounted Votes,\n Multiplied by Square Root of Ballots")
+print(plot4)
+
+# Plot 4 figure 2 
+
+# plot qq plot using the geom_qq function of ggplot 
+
+# Reference: http://stackoverflow.com/questions/14958814/how-can-i-label-the-points-of-a-quantile-quantile-plot-composed-with-ggplot2
+plot5 = ggplot(data = adjusted.df, aes(sample = residual.adjusted )) + stat_qq()
+# Extract data used to plot 
+df.new = ggplot_build(plot5)$data[[1]]; head(df.new)
+# Order county based on residuals
+df.new$county = adjusted.df$county[order(adjusted.df$residual.adjusted)]
+# Subset df to include only outliers
+outlier.index = which(df.new$county %in% outlier.counties)
+df.outlier = df.new[outlier.index,]; df.outlier
+
+# Plot using ggplot 
+plot5 = ggplot(data=df.outlier, aes(x=theoretical, y=sample, label=county)) + geom_text(nudge_x = 0.5, nudge_y = 0.5) + geom_point(data = df.new, aes(theoretical, sample)) + xlab("Standard Normal Quantile") + ylab("Sorted Residuals Proportion of Uncounted Votes,\n Multiplied by the Square Root of Ballots")
+print(plot5)
+```
+
+```{r Question 1: Check the proportions given out in the press release}
+# Question 1 
+
+# Treat OS-CC and OS-PC as same 
+voting.data.transformed = voting.data
+# I can only assign factors that are currently factors, OS isn't a factor yet, so add it
+levels(voting.data.transformed$equip) = c(levels(voting.data.transformed$equip), 'OS')
+# Lump OS-CC and OS-PC together into OS
+voting.data.transformed$equip[voting.data$equip %in% c('OS-CC','OS-PC')] = 'OS'
+voting.data.transformed$equip = droplevels(voting.data.transformed$equip)
+# Split data according to equip
+voting.data.by.equip = split(voting.data.transformed, voting.data.transformed$equip)
+# Extract percent.uncounted column 
+uncounted.by.equip = lapply(voting.data.by.equip, '[[', which(colnames(voting.data)=='percent.uncounted'))
+uncounted.means = lapply(uncounted.by.equip, function(x) mean(x)); uncounted.means
+uncounted.means = transform(uncounted.means, uncounted.means = unlist(uncounted.means))
+uncounted.means = subset(uncounted.means, select = 'uncounted.means'); uncounted.means
+```
+
+```{r Question 2: Why does the state analysis give a much larger percentage of uncounted votes?}
+# Note that the reported proportions are obtained from averaging proportions for each county for ech class. Our analysis instead uses pooled proportions by adding all the uncounted votes together for each class of voting equipment and then dividing by its respective total number of ballots cast 
+```
+
+
+```{r Question 3: Run weighted analysis with effect coding & interpret}
+
+# Question 3
+# Reference: http://www.ats.ucla.edu/stat/r/library/contrast_coding.html, http://polisci.msu.edu/jacoby/icpsr/regress3/lectures/week3/11.Outliers.pdf
+# Function to generate indicators 
+make.indicator <- function(col.name, equip.name, threelevel = TRUE){
+  new.vector = vector("numeric", length = length(voting.data$equip))
+  new.vector[voting.data$equip != equip.name] = 0
+  new.vector[voting.data$equip == equip.name] = 1
+  if(threelevel){
+    new.vector[voting.data$equip == 'PUNCH'] = -1 
+  }
+  new.vector = as.data.frame(new.vector)
+  colnames(new.vector) = col.name
+  return(new.vector)
+}
+percent.uncounted = voting.data$percent.uncounted
+indicator.df.a = cbind(percent.uncounted, make.indicator('is.lever','LEVER'), make.indicator('is.OSPC', 'OS-PC'), make.indicator('is.OSCC', 'OS-CC'), make.indicator('is.paper','PAPER'))
+indicator.df.b = cbind(percent.uncounted, make.indicator('is.lever','LEVER', threelevel = FALSE), make.indicator('is.OSPC', 'OS-PC', threelevel = FALSE), make.indicator('is.OSCC', 'OS-CC', threelevel = FALSE), make.indicator('is.paper','PAPER', threelevel = FALSE), make.indicator('is.punch','PUNCH', threelevel = FALSE))
+
+# Make weighted models 
+Q3.model.a = lm(percent.uncounted*100 ~ is.lever + is.OSPC + is.OSCC + is.paper, data = indicator.df.a, weights = voting.data$ballots)
+summary(Q3.model.a)
+Q3.model.b = lm(percent.uncounted*100 ~ is.lever + is.OSPC + is.OSCC + is.paper, data = indicator.df.b, weights = voting.data$ballots)
+summary(Q3.model.b)
+Q3.model.c = lm(percent.uncounted*100 ~ is.lever + is.OSPC + is.OSCC + is.paper + is.punch + 0, data = indicator.df.b, weights = voting.data$ballots)
+summary(Q3.model.c)
+model.comparison = anova(Q3.model.a, Q3.model.b, Q3.model.c); model.comparison
+
+# Model 1: Intercept is the grand mean, estimates are differences between the mean predicted proportions and the grand mean
+# Model 2: Intercept is the mean of Punch, estimates are differences between the mean predicted proportions and the mean predicted proportions of Punch 
+# Model 3: Zeroed the intercept, estimates are the predicted proportions 
+# Note: Linear algebra, 5 equations for 5 unknowns 
+# lm(y ~ as.factor(equipment_type))
+# data = within(data, equip = relevel(equip, ref="PUNCH"))
+```
+
+```{r Question 4: Why does significance level depend on how the model was set up?}
+# Key takeaway: Don't just focus on finding the right test 
+```
+
+```{r Question 5: Why are the reported standard errors much larger for model A than B?}
+# First model is dummy coding. Intercept is the mean of proportion uncounted for the punch group
+# Second model is effect(deviation) coding. Intercept is the grand mean
+```
+
+
+```{r Question 6: Demonstrate models are equivalent}
+# Sum of residuals are the same by so they're all equivalent 
+```
+
+```{r Question 7: Why multiply predicted and residual values by square root of ballots before plotting?}
+# Read chapter 12 weighted regression 
+```
+
+
+```{r Question 8: Post Hoc Tukey HSD Test & Relevel to change reference group}
+# Question 8
+# Recall model 7 
+# https://en.wikipedia.org/wiki/Tukey%27s_range_test
+# Check normality: http://stats.stackexchange.com/questions/3136/how-to-perform-a-test-using-r-to-see-if-data-follows-normal-distribution
+aov.equip.econ = aov(weighted.uncounted.v.equip.econ.tier)
+mcp = TukeyHSD(aov.equip.econ, "equip", ordered = TRUE); mcp
+
+# Method 2: Releveling
+voting.data$equip = relevel(x=voting.data$equip,ref="PUNCH")
+model.wrt.punch = lm(percent.uncounted ~ equip + econ, data=voting.data, weights = ballots)
+summary(model.wrt.punch)
+voting.data$equip = relevel(x=voting.data$equip,ref="LEVER")
+model.wrt.lever = lm(percent.uncounted ~ equip + econ, data=voting.data, weights = ballots)
+summary(model.wrt.lever)
+voting.data$equip = relevel(x=voting.data$equip,ref="OS-CC")
+model.wrt.oscc = lm(percent.uncounted ~ equip + econ, data=voting.data, weights = ballots)
+summary(model.wrt.oscc)
+voting.data$equip = relevel(x=voting.data$equip,ref="OS-PC")
+model.wrt.ospc = lm(percent.uncounted ~ equip + econ, data=voting.data, weights = ballots)
+summary(model.wrt.ospc)
+voting.data$equip = relevel(x=voting.data$equip,ref="PAPER")
+model.wrt.paper = lm(percent.uncounted ~ equip + econ, data=voting.data, weights = ballots)
+summary(model.wrt.paper)
+```
+```{r Question 9: Effects of outliers}
+# Recall model 7 and model 9 
+# Reference to consider http://people.math.sfu.ca/~lockhart/richard/350/08_2/lectures/FTests/web.pdf
+```
+
+```{r Question 10: Model Selection}
+# Use stepAIC
+# References: http://www.stat.columbia.edu/~martin/W2024/R10.pdf
+# Don't use the county column or gore, bush, votes, ballots, other in stepAIC
+excluded.columns = which(colnames(voting.data) %in% c('County','gore','bush','other','county.type','votes'))
+null = lm(percent.uncounted~1, data = voting.data[,-excluded.columns])
+full = lm(percent.uncounted~., data = voting.data[,-excluded.columns])
+results = stepAIC(null, scope=list(upper = full, lower = null), direction = "forward", trace = FALSE); results$anova
+result2 = step(full, scope=list(lower=null, upper=full),direction = "backward"); result2
+result3 = step(null, scope=list(lower=null, upper=full), direction = "forward"); result3
+
+# Result: Select model with econ + equip + rural 
+
+```
+
+```{r}
+contrasts(factor(voting.data$county.type))
+```
+
+```{r Question 11: Simpsons Paradox}
+# Simpson's paradox is a paradox in which a trend appears in different groups of data but disappears or reverses when these groups are combined 
+# Evidence of Simpson's paradox: 
+
+```
+
+```{r Question 12: Effects of interaction}
+# Question 12 
+interaction.anova = anova(weighted.uncounted.v.equip.econ.tier, interaction.model); interaction.anova
+# F = ((SS1 - SS2)/(df1-df2))/(SS2/df2)
+```
+
+```{r Question 13: Is econ.tier a confounding variable?}
+# Question 13 
+# Anova for models with and without econ.tier 
+econ.tier.anova = anova(weighted.uncounted.v.equip.indicators.afam, weighted.uncounted.v.equip.indicators.afam.tier); econ.tier.anova
+```
+
+```{r Question 14: Use of hypothesis tests and statistic significance}
+
+```
+```{r Question 15: Ways to count black voters}
+# Question 15 
+# Assume afam votes are just as likely to not be counted as non-afam votes 
+afam = voting.data$X.afr.am
+afam.ballots = afam*voting.data$ballots
+afam.votes = afam*voting.data$votes
+percent.afam.uncounted = (sum(afam.ballots)-sum(afam.votes))/sum(afam.ballots)*100; percent.afam.uncounted
+non.afam.ballots = voting.data$ballots - afam.ballots
+non.afam.votes = voting.data$votes - afam.votes
+percent.non.afam.uncounted = (sum(non.afam.ballots)-sum(non.afam.votes))/sum(non.afam.ballots)*100; percent.non.afam.uncounted
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
